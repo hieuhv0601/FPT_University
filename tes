@@ -1,0 +1,686 @@
+// File: BulkOperations.java
+package com.viettel.crontab_service.services.impl;
+
+import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.update.UpdateRequest;
+
+public interface BulkOperations {
+    void update(UpdateRequest request);
+    void insert(IndexRequest request);
+}
+
+// File: BulkOperationsImpl.java
+package com.viettel.crontab_service.services.impl;
+
+import org.elasticsearch.action.bulk.BulkProcessor;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.client.RequestOptions;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.action.bulk.BulkProcessor.Listener;
+import org.elasticsearch.client.RequestOptions;
+import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.core.TimeValue;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import javax.annotation.PreDestroy;
+import java.util.concurrent.TimeUnit;
+
+@Service
+public class BulkOperationsImpl implements BulkOperations {
+
+    private final BulkProcessor bulkProcessor;
+    private final Logger logger = LoggerFactory.getLogger(BulkOperationsImpl.class);
+
+    @Autowired
+    public BulkOperationsImpl(RestHighLevelClient client) {
+        BulkProcessor.Listener listener = new BulkProcessor.Listener() {
+            @Override
+            public void beforeBulk(long executionId, BulkRequest request) {
+                int numberOfActions = request.numberOfActions();
+                logger.info("executing bulk {} with {} requests", executionId, numberOfActions);
+            }
+
+            @Override
+            public void afterBulk(long executionId, BulkRequest request, BulkResponse response) {
+                if (response.hasFailures()) {
+                    logger.error("bulk {} executed with failure,response {}", executionId, response.buildFailureMessage());
+                } else {
+                    logger.info("bulk {} completed in {} milliseconds", executionId, response.getTook().getMillis());
+                }
+            }
+
+            @Override
+            public void afterBulk(long executionId, BulkRequest request, Throwable failure) {
+                logger.error("Error occurs fail to execute bulk with executionId {}: {}", executionId, failure.getMessage(), failure);
+            }
+        };
+
+        this.bulkProcessor = BulkProcessor.builder(
+                        (request, bulkListener) -> client.bulkAsync(request, RequestOptions.DEFAULT, bulkListener),
+                        listener)
+                .setBulkActions(1000)
+                .setBulkSize(new ByteSizeValue(5L, ByteSizeUnit.MB))
+                .setFlushInterval(TimeValue.timeValueSeconds(2))
+                .setBackoffPolicy(BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(250), 2))
+                .build();
+    }
+
+    @Override
+    public void update(UpdateRequest request) {
+        bulkProcessor.add(request);
+    }
+
+    @Override
+    public void insert(IndexRequest request) {
+        bulkProcessor.add(request);
+    }
+
+    @PreDestroy
+    public void destroy() {
+        try {
+            bulkProcessor.awaitClose(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            logger.error("bulkProcessor fail to close!");
+        }
+        logger.info("bulkProcessor closed");
+    }
+}
+// File: SearchService.java
+package com.viettel.crontab_service.services.impl;
+
+import org.elasticsearch.search.SearchHits;
+
+import java.io.IOException;
+import java.util.Map;
+
+public interface SearchService {
+    SearchHits executeSearch(SearchRequest searchRequest) throws IOException;
+    Map<String, Map<String, String>> loadDataFromElasticsearch(String indexName) throws IOException;
+    long getTotalHitCount(String indexName) throws IOException;
+}
+
+// File: SearchServiceImpl.java
+package com.viettel.crontab_service.services.impl;
+
+import org.elasticsearch.action.search.*;
+import org.elasticsearch.client.RequestOptions;
+import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.search.SearchHits;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.sort.SortOrder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+@Service
+public class SearchServiceImpl implements SearchService {
+
+    private final RestHighLevelClient client;
+
+    @Autowired
+    public SearchServiceImpl(RestHighLevelClient client) {
+        this.client = client;
+    }
+
+    @Override
+    public SearchHits executeSearch(SearchRequest searchRequest) throws IOException {
+        SearchResponse searchResponse = client.search(searchRequest, RequestOptions.DEFAULT);
+        return searchResponse.getHits();
+    }
+
+    @Override
+    public Map<String, Map<String, String>> loadDataFromElasticsearch(String indexName) throws IOException {
+        Map<String, Map<String, String>> allDocuments = new HashMap<>();
+        final Scroll scroll = new Scroll(TimeValue.timeValueMinutes(1L));
+        SearchRequest searchRequest = new SearchRequest(indexName);
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder()
+                .query(QueryBuilders.matchAllQuery())
+                .size(PAGE_SIZE);
+        searchRequest.scroll(scroll);
+        searchRequest.source(searchSourceBuilder);
+
+        SearchResponse searchResponse = client.search(searchRequest, RequestOptions.DEFAULT);
+        String scrollId = searchResponse.getScrollId();
+        SearchHits searchHits = searchResponse.getHits();
+
+        while (hasMoreHits(searchHits)) {
+            processSearchHits(searchHits, allDocuments);
+            searchResponse = scrollNextBatch(scrollId);
+            scrollId = searchResponse.getScrollId();
+            searchHits = searchResponse.getHits();
+        }
+
+        clearScroll(scrollId);
+        return allDocuments;
+    }
+
+    @Override
+    public long getTotalHitCount(String indexName) throws IOException {
+        CountRequest countRequest = new CountRequest(indexName);
+        CountResponse countResponse = client.count(countRequest, RequestOptions.DEFAULT);
+        return countResponse.getCount();
+    }
+
+    private boolean hasMoreHits(SearchHits searchHits) {
+        return searchHits != null && searchHits.getHits().length > 0;
+    }
+
+    private void processSearchHits(SearchHits searchHits, Map<String, Map<String, String>> allDocuments) throws JsonProcessingException {
+        for (SearchHit hit : searchHits) {
+            String sourceAsString = hit.getSourceAsString();
+            Map<String, String> document = jsonToMap(sourceAsString);
+            allDocuments.put(hit.getId(), document);
+        }
+    }
+
+    private SearchResponse scrollNextBatch(String scrollId) throws IOException {
+        SearchScrollRequest scrollRequest = new SearchScrollRequest(scrollId);
+        scrollRequest.scroll(new Scroll(TimeValue.timeValueMinutes(1L)));
+        return client.scroll(scrollRequest, RequestOptions.DEFAULT);
+    }
+
+    private void clearScroll(String scrollId) throws IOException {
+        ClearScrollRequest clearScrollRequest = new ClearScrollRequest();
+        clearScrollRequest.addScrollId(scrollId);
+        client.clearScroll(clearScrollRequest, RequestOptions.DEFAULT);
+    }
+
+   
+    private Map<String, String> jsonToMap(String jsonString) throws JsonProcessingException {
+        ObjectMapper mapper = new ObjectMapper();
+        TypeReference<HashMap<String, String>> typeRef = new TypeReference<HashMap<String, String>>() {};
+        return mapper.readValue(jsonString, typeRef);
+    }
+}
+// File: ProfileDataProcessor.java
+package com.viettel.crontab_service.services.impl;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public interface ProfileDataProcessor {
+    void updateProfileData(String profileId, String contentType, String contentId);
+    String getExistingDocument(String profileId, Map<String, Map<String, String>> allDocuments);
+    boolean validateFields(String profileId, String contentType, String contentId, String timestamp, String watchedDuration);
+    String extractField(Map<String, Object> source, String field);
+    String getListKey(String contentType);
+}
+
+// File: ProfileDataProcessorImpl.java
+package com.viettel.crontab_service.services.impl;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+public class ProfileDataProcessorImpl implements ProfileDataProcessor {
+
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, List<String>>> profileIdMap = new ConcurrentHashMap<>();
+    private static final String[] FIELD_NAMES = {"profileId", "contentType", "contentId", "watchedDuration", "@timestamp"};
+    private static final int MAX_ITEMS = 5;
+
+    @Override
+    public void updateProfileData(String profileId, String contentType, String contentId) {
+        ConcurrentHashMap<String, List<String>> profileDataList = profileIdMap
+                .computeIfAbsent(profileId, k -> new ConcurrentHashMap<>());
+        String listKey = getListKey(contentType);
+        if (StringUtils.hasValue(listKey)) {
+            profileDataList.computeIfAbsent(listKey, k -> new ArrayList<>()).add(contentId);
+        }
+    }
+
+    @Override
+    public String getExistingDocument(String profileId, Map<String, Map<String, String>> allDocuments) {
+        for (Map.Entry<String, Map<String, String>> entry : allDocuments.entrySet()) {
+            Map<String, String> documentData = entry.getValue();
+            if (profileId.equals(documentData.get("profileId"))) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public boolean validateFields(String profileId, String contentType, String contentId, String timestamp, String watchedDuration) {
+        if (!StringUtils.hasValue(profileId) || !StringUtils.hasValue(contentType) || !StringUtils.hasValue(contentId)) {
+            return false;
+        }
+        return isValidTimestamp(timestamp) && isValidWatchedDuration(watchedDuration);
+    }
+
+    @Override
+    public String extractField(Map<String, Object> source, String field) {
+        String value = StringUtils.getStringSafely(source, field);
+        if (!StringUtils.hasValue(value)) {
+            logger.warn("Missing {} in document", field);
+        }
+        return value;
+    }
+
+    @Override
+    public String getListKey(String contentType) {
+        switch (contentType) {
+            case "VIDEO":
+                return Constants.VOD_KEY;
+            case "FILM":
+                return Constants.FILM_KEY;
+            case "LIVE":
+                return Constants.CHANNEL_KEY;
+            default:
+                return "";
+        }
+    }
+
+    private String mergeAndLimitLists(List<String> newList, List<String> oldList) {
+        return Stream.concat(newList.stream(), oldList.stream())
+                .distinct()
+                .limit(MAX_ITEMS)
+                .collect(Collectors.joining("|"));
+    }
+}
+// File: ScenarioRecommendation.java
+package com.viettel.crontab_service.services.impl;
+
+import java.util.List;
+
+public interface ScenarioRecommendation {
+    String getScenarioRecommend(String scenario, String key);
+    String getScenarioRecommendList(String apiPath, String recommendKey);
+    String getScenarioRecommendList(String apiPath, List<String> recommendKeys);
+}
+
+// File: ScenarioRecommendationImpl.java
+package com.viettel.crontab_service.services.impl;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class ScenarioRecommendationImpl implements ScenarioRecommendation {
+
+    @Override
+    public String getScenarioRecommend(String scenario, String key) {
+        if (!StringUtils.hasValue(key)) {
+            return "";
+        }
+        if (scenario.contains("vod")) {
+            scenario = "similar_video";
+        }
+        List<String> idList = Arrays.asList(key.split("\\|"));
+        String latestItem = idList.stream().findFirst().orElse("");
+        return latestItem.isEmpty() ? "" : getScenarioRecommendList(scenario, latestItem);
+    }
+
+    @Override
+    public String getScenarioRecommendList(String apiPath, String recommendKey) {
+        String recommendList = getRecommendListFromCache(apiPath, recommendKey);
+        if (!"null".equals(recommendList)) {
+            recommendList = recommendList.replaceAll("\\s", "");
+            recommendList = getRandomPart(recommendList, recommendKey);
+            List<String> topItems = getTopItems(recommendList);
+            Collections.shuffle(topItems);
+            List<String> selectedItems = topItems.subList(0, Math.min(topItems.size(), 5));
+            recommendList = String.join("|", selectedItems);
+        } else {
+            recommendList = "";
+        }
+        return recommendList;
+    }
+
+    @Override
+    public String getScenarioRecommendList(String apiPath, List<String> recommendKeys) {
+        List<String> aggregatedList = new ArrayList<>();
+        for (String recommendKey : recommendKeys) {
+            String recommendList = fetchRecommendList(apiPath, recommendKey);
+            if (!recommendList.isEmpty()) {
+                aggregatedList.add(recommendList);
+            }
+        }
+        if (aggregatedList.isEmpty()) {
+            return "";
+        }
+        String combinedList = String.join(",", aggregatedList).replaceAll("\\s", "");
+        int randomList = (int) (Math.random() * 5);
+        try {
+            return combinedList.split(",")[randomList];
+        } catch (Exception e) {
+            logger.info("Aggregated recommend list not enough elements {}", recommendKeys);
+            return combinedList.split(",")[0];
+        }
+    }
+
+    private String getRecommendListFromCache(String apiPath, String recommendKey) {
+        String recommendList;
+        try {
+            recommendList = getValueFromCache(apiPath, recommendKey);
+        } catch (Exception e) {
+            putValueToRedis(apiPath, recommendKey, "null");
+            recommendList = "null";
+        }
+        return recommendList;
+    }
+
+    private String getRandomPart(String recommendList, String recommendKey) {
+        String[] parts = recommendList.split(",");
+        int randomList = (int) (Math.random() * 5);
+        try {
+            return parts[randomList];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            logger.info("Recommend key not enough list {}", recommendKey);
+            return parts[0];
+        }
+    }
+
+    private List<String> getTopItems(String recommendList) {
+        return Arrays.stream(recommendList.split("\\|"))
+                .limit(10)
+                .collect(Collectors.toList());
+    }
+
+    private String fetchRecommendList(String apiPath, String recommendKey) {
+        String recommendList = "";
+        try {
+            recommendList = getValueFromCache(apiPath, recommendKey);
+        } catch (Exception e) {
+            putValueToRedis(apiPath, recommendKey, "null");
+            return recommendList;
+        }
+        if (!"null".equals(recommendList)) {
+            return recommendList;
+        } else {
+            return "";
+        }
+    }
+
+    private String getValueFromCache(String apiName, String param) {
+        try {
+            String value = getValueFromRedis(apiName, param);
+            if (!StringUtils.hasValue(value)) {
+                value = getValueFromELK(apiName, param);
+                if (StringUtils.hasValue(value)) {
+                    putValueToRedis(apiName, param, value);
+                }
+            }
+            return value;
+        } catch (Exception e) {
+            logger.error("Error when get value from cache");
+            return "";
+        }
+    }
+
+    private String getValueFromRedis(String apiName, String param) {
+        try {
+            return jedisCluster.get(String.join("_", apiName, param));
+        } catch (JedisConnectionException e) {
+            logger.error("Error connecting to Redis for getValueFromRedis: " + e.getMessage());
+        } catch (JedisClusterException e) {
+            logger.error("Error interacting with Redis cluster for getValueFromRedis: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("Unexpected error in getValueFromRedis: " + e.getMessage(), e);
+        }
+        return "";
+    }
+
+    private void putValueToRedis(String apiName, String key, String value) {
+        try {
+            jedisCluster.setex(String.join("_", apiName, key), ttlApiTV360, value);
+        } catch (Exception e) {
+            logger.error("Error REDIS " + apiName + "|" +
+                    ApiResponseCode.REDIS_SAVE_ERROR.getStatus() + "|" +
+                    ApiResponseCode.REDIS_SAVE_ERROR.getMessage());
+        }
+    }
+
+    public String getValueFromELK(String apiName, String param) {
+        try {
+            SearchRequest searchRequest = searchValue(apiName, param);
+            SearchResponse searchResponse = executeSearch(searchRequest);
+            List<TV360Recommend> tv360Recommends = parseSearchResponse(searchResponse);
+            if (!tv360Recommends.isEmpty()) {
+                return tv360Recommends.get(0).getValue();
+            } else {
+                handleEmptyResults(apiName);
+                return null;
+            }
+        } catch (IOException e) {
+            logger.error("Error executing search", e);
+            throw new RestException(ApiResponseCode.ELASTICSEARCH_SEARCH_ERROR);
+        }
+    }
+
+    private SearchRequest searchValue(String apiName, String key) {
+        BoolQueryBuilder boolQuery = new BoolQueryBuilder();
+        String indexName = internalAPIConfig.getIndex().get(apiName);
+        logger.info("indexName TV360: " + indexName);
+        if (key != null) {
+            boolQuery.must(QueryBuilders.matchQuery("key", key).operator(Operator.AND));
+        }
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder().query(boolQuery).size(1);
+        return new SearchRequest(indexName).source(sourceBuilder).requestCache(true);
+    }
+}
+// File: DataMigrationHandler.java
+package com.viettel.crontab_service.services.impl;
+
+import java.io.IOException;
+
+public interface DataMigrationHandler {
+    void handleMigrationError(IOException e);
+    void aggregateData(String sourceIndex, String destinationIndex) throws IOException;
+}
+
+// File: DataMigrationHandlerImpl.java
+package com.viettel.crontab_service.services.impl;
+
+import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.sort.SortOrder;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+
+public class DataMigrationHandlerImpl implements DataMigrationHandler {
+
+    private final SearchService searchService;
+    private final BulkOperations bulkOperations;
+    private final ProfileDataProcessor profileDataProcessor;
+    private final Logger logger = LoggerFactory.getLogger(DataMigrationHandlerImpl.class);
+
+    public DataMigrationHandlerImpl(SearchService searchService, BulkOperations bulkOperations, ProfileDataProcessor profileDataProcessor) {
+        this.searchService = searchService;
+        this.bulkOperations = bulkOperations;
+        this.profileDataProcessor = profileDataProcessor;
+    }
+
+    @Override
+    public void handleMigrationError(IOException e) {
+        logger.error("Error migrating data: {}", e.getMessage());
+        throw new RuntimeException("Error migrating data", e);
+    }
+
+    @Override
+    public void aggregateData(String sourceIndex, String destinationIndex) throws IOException {
+        SearchRequest searchRequest = new SearchRequest(sourceIndex);
+        SearchSourceBuilder searchSourceBuilder;
+        long totalHits = searchService.getTotalHitCount(sourceIndex);
+        double count = Math.ceil((double) totalHits / PAGE_SIZE);
+
+        do {
+            String lastMarker = elkUtils.queryCheckPoint(LOG_TYPE);
+            searchSourceBuilder = buildSearchSourceBuilder(lastMarker);
+
+            try {
+                processSearchResults(searchRequest, searchSourceBuilder, lastMarker);
+                logger.info("Data migration completed successfully.");
+                count--;
+            } catch (IOException e) {
+                handleMigrationError(e);
+            }
+        } while (count > 0);
+
+        try {
+            performBulkOperations(destinationIndex);
+        } catch (Exception e) {
+            logger.error("Error when perform bulk operations");
+        }
+    }
+
+    private SearchSourceBuilder buildSearchSourceBuilder(String lastMarker) {
+        SearchSourceBuilder searchSourceBuilder;
+        if (!StringUtils.hasValue(lastMarker)) {
+            searchSourceBuilder = new SearchSourceBuilder()
+                    .query(QueryBuilders.matchAllQuery())
+                    .sort("@timestamp", SortOrder.ASC)
+                    .size(PAGE_SIZE);
+        } else {
+            searchSourceBuilder = new SearchSourceBuilder()
+                    .query(QueryBuilders.matchAllQuery())
+                    .sort("@timestamp", SortOrder.ASC)
+                    .searchAfter(new Object[]{lastMarker})
+                    .size(PAGE_SIZE);
+        }
+        return searchSourceBuilder;
+    }
+
+    private void processSearchResults(SearchRequest searchRequest, SearchSourceBuilder searchSourceBuilder, String lastMarker) throws IOException {
+        String maxTimestamp;
+        SearchResponse searchResponse = client.search(searchRequest.source(searchSourceBuilder), RequestOptions.DEFAULT);
+        SearchHits searchHits = searchResponse.getHits();
+
+        List<String> processedMaxTimestamps = Arrays.stream(searchHits.getHits())
+                .parallel()
+                .map(this::processHit)
+                .filter(StringUtils::hasValue)
+                .collect(Collectors.toList());
+
+        maxTimestamp = findMaxTimestamp(processedMaxTimestamps, lastMarker);
+        if (StringUtils.hasValue(maxTimestamp)) {
+            elkUtils.pushCheckPointToElk(LOG_TYPE, maxTimestamp);
+        }
+    }
+
+    private String findMaxTimestamp(List<String> listTimestamp, String lastMarker) {
+        try {
+            if (listTimestamp.isEmpty()) {
+                return lastMarker;
+            }
+
+            Optional<Instant> maxTimestamp = listTimestamp.stream()
+                    .filter(StringUtils::hasValue)
+                    .map(Instant::parse)
+                    .max(Instant::compareTo);
+
+            if (lastMarker.isEmpty()) {
+                return maxTimestamp.orElseThrow(null).toString();
+            }
+
+            Instant lastMarkerInstant = Instant.parse(lastMarker);
+            return maxTimestamp.filter(ts -> ts.isAfter(lastMarkerInstant))
+                    .orElse(lastMarkerInstant)
+                    .toString();
+
+        } catch (Exception e) {
+            logger.error("Error occurred when finding max timestamp", e);
+            return lastMarker;
+        }
+    }
+
+    private String processHit(SearchHit hit) {
+        Map<String, Object> sourceAsMap = hit.getSourceAsMap();
+        String timestamp;
+
+        try {
+            Map<String, String> extractedValues = extractFields(sourceAsMap);
+            String profileId = extractedValues.get(FIELD_NAMES[0]);
+            String contentType = extractedValues.get(FIELD_NAMES[1]);
+            String contentId = extractedValues.get(FIELD_NAMES[2]);
+            String watchedDuration = extractedValues.get(FIELD_NAMES[3]);
+            timestamp = extractedValues.get(FIELD_NAMES[4]);
+
+            if (!validateFields(profileId, contentType, contentId, timestamp, watchedDuration)) {
+                return "";
+            }
+            if (Long.parseLong(watchedDuration) > 30) {
+                profileDataProcessor.updateProfileData(profileId, contentType, contentId);
+            }
+
+        } catch (Exception e) {
+            logger.error("Error when extracting data from document with _id {}", hit.getId(), e);
+            return "";
+        }
+
+        return timestamp;
+    }
+
+    private void performBulkOperations(String destinationIndex) throws IOException {
+        Map<String, Map<String, String>> existingDocuments = searchService.loadDataFromElasticsearch(destinationIndex);
+        List<Map.Entry<String, ConcurrentHashMap<String, List<String>>>> entries;
+        synchronized (profileIdMap) {
+            entries = new ArrayList<>(profileIdMap.entrySet());
+        }
+
+        for (Map.Entry<String, ConcurrentHashMap<String, List<String>>> entry : entries) {
+            String profileId = entry.getKey();
+            ConcurrentHashMap<String, List<String>> profileDataList = entry.getValue();
+
+            try {
+                String existingDocumentId = profileDataProcessor.getExistingDocument(profileId, existingDocuments);
+                Map<String, Object> sourceMap = buildDocumentSource(profileId, profileDataList, existingDocuments, existingDocumentId);
+
+                if (StringUtils.hasValue(existingDocumentId)) {
+                    bulkOperations.update(new UpdateRequest(destinationIndex, existingDocumentId).doc(sourceMap));
+                } else {
+                    String newDocumentId = UUID.randomUUID().toString();
+                    bulkOperations.insert(new IndexRequest(destinationIndex).id(newDocumentId).source(sourceMap));
+                }
+            } catch (Exception e) {
+                logger.error("Error processing data for profile: {}. Exception: {}", profileId, e.getMessage());
+            }
+        }
+
+        redisUtils.hMSetPipeline(cachedProfileId, cachedDocumentList);
+        cachedProfileId.clear();
+        cachedDocumentList.clear();
+        profileIdMap.clear();
+    }
+
+    private Map<String, Object> buildDocumentSource(
+            String profileId,
+            ConcurrentHashMap<String, List<String>> profileDataList,
+            Map<String, Map<String, String>> existingDocuments,
+            String existingDocumentId
+    ) {
+        Map<String, Object> sourceMap = new HashMap<>();
+        Map<String, String> existingDataMap = existingDocumentId != null ? existingDocuments.get(existingDocumentId) : Collections.emptyMap();
+
+        sourceMap.put("vod", profileDataProcessor.mergeAndLimitLists(profileDataList.getOrDefault("vod", Collections.emptyList()), existingDataMap.getOrDefault("vod", Collections.emptyList())));
+        sourceMap.put("film", profileDataProcessor.mergeAndLimitLists(profileDataList.getOrDefault("film", Collections.emptyList()), existingDataMap.getOrDefault("film", Collections.emptyList())));
+        sourceMap.put("chn", profileDataProcessor.mergeAndLimitLists(profileDataList.getOrDefault("chn", Collections.emptyList()), existingDataMap.getOrDefault("chn", Collections.emptyList())));
+
+        sourceMap.put("vod_scenario", getScenarioRecommend("similar_vod", StringUtils.getStringSafely(sourceMap, "vod")));
+        sourceMap.put("film_scenario", getScenarioRecommend("similar_film", StringUtils.getStringSafely(sourceMap, "film")));
+
+        cachedProfileId.add(String.join("_", "tv360_historical_interaction", profileId));
+        cachedDocumentList.add(new HashMap<>(sourceMap));
+
+        sourceMap.put("profileId", profileId);
+
+        return sourceMap;
+    }
+}
