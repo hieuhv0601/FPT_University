@@ -1,0 +1,76 @@
+curl --location 'https://api.whatismyip.com/app.php' \
+--header 'accept: */*' \
+--header 'accept-language: en-US,en;q=0.9,vi;q=0.8,zh-TW;q=0.7,zh-CN;q=0.6,zh;q=0.5' \
+--header 'origin: https://www.whatismyip.com' \
+--header 'priority: u=1, i' \
+--header 'referer: https://www.whatismyip.com/' \
+--header 'sec-ch-ua: "Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"' \
+--header 'sec-ch-ua-mobile: ?0' \
+--header 'sec-ch-ua-platform: "Windows"' \
+--header 'sec-fetch-dest: empty' \
+--header 'sec-fetch-mode: cors' \
+--header 'sec-fetch-site: same-site' \
+--header 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' \
+--form 'action="ip-whois-lookup"' \
+--form 'ip="104.2.5.6"'
+
+curl --location 'https://www.whois.com/whois/125.39.5.0' \
+--header 'accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7' \
+--header 'accept-language: en-US,en;q=0.9,vi;q=0.8,zh-TW;q=0.7,zh-CN;q=0.6,zh;q=0.5' \
+--header 'cookie: whoissid=3vUCAC2RND4gGtgzproiXUh9CX5Dy1Di4BNo%2F5tWuinfdwdfDMNtXDzGyFyMvlZWbhxYy2fIMD3a1jQhpTSaOKBG6n3NMLJXYIobcP4WrkBxPTNMCaFLweXzGilbIuTgmnFj%2B2E8mnmatnWlFMKqEs89nSB7Zwq3XC%2BWWhSNSvCVyx69qO6jxozMTdIG3CTwDG6shUjERvw1pdv%2Ft36pYR7q2zbTlrJ9UTitX6UBPdaB0fEPjHi%2BBE%2FCT%2FFzX3MSEehQf%2BLI50d0XKDIBhuio7jefv25iWn4mOdjB%2FQZozA%2FVE1kMxTITQOgt%2FO0U2n3R6y1y6ICjleNjO%2FKvEwOP1WWTYX%2Fd%2F3gLBslt7E5u3%2FNibm1D6%2FHIkh5NifXtqVujF2cAbBQPQjp08XUXUV1j6olVl2GK0N3MplfRS9pGici9GoyYiwNCQhNOOOFMIOUDHco%2BpV1fcgDLfvmy8JzcM8a74c285ym%2FDgjhQNr87C3Oh5cmD7CKPTRCJxJRzdKaSd4cHIy3qtcfu2Q%2BrtQTNc%3D; __cf_bm=xDmO7M3DI2l7IQxVmE6nJlRQqCzQE002aAhAXL1sMQQ-1723119380-1.0.1.1-GOZXnIhqAiAhb4qzCWS_U_WbxLBTWFcx1qUy9y9HjsLXqXc8PfOYm2g20y0laXMcJGc1uuWQJnVlCyC8KB92zA' \
+--header 'priority: u=0, i' \
+--header 'referer: https://shop.whois.com/' \
+--header 'sec-ch-ua: "Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"' \
+--header 'sec-ch-ua-mobile: ?0' \
+--header 'sec-ch-ua-platform: "Windows"' \
+--header 'sec-fetch-dest: document' \
+--header 'sec-fetch-mode: navigate' \
+--header 'sec-fetch-site: same-site' \
+--header 'sec-fetch-user: ?1' \
+--header 'upgrade-insecure-requests: 1' \
+--header 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
+
+curl --location 'https://rdap.lacnic.net/rdap/whois/125.39.5.0' \
+--header 'Accept: application/json, text/plain, */*' \
+--header 'Accept-Language: en-US,en;q=0.9,vi;q=0.8,zh-TW;q=0.7,zh-CN;q=0.6,zh;q=0.5' \
+--header 'Connection: keep-alive' \
+--header 'Origin: https://query.milacnic.lacnic.net' \
+--header 'Referer: https://query.milacnic.lacnic.net/' \
+--header 'Sec-Fetch-Dest: empty' \
+--header 'Sec-Fetch-Mode: cors' \
+--header 'Sec-Fetch-Site: same-site' \
+--header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' \
+--header 'sec-ch-ua: "Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"' \
+--header 'sec-ch-ua-mobile: ?0' \
+--header 'sec-ch-ua-platform: "Windows"'
+
+curl --location 'https://wq.apnic.net/query?searchtext=103.5.2.0' \
+--header 'accept: */*' \
+--header 'accept-language: en-US,en;q=0.9,vi;q=0.8,zh-TW;q=0.7,zh-CN;q=0.6,zh;q=0.5' \
+--header 'priority: u=1, i' \
+--header 'referer: https://wq.apnic.net/static/search.html' \
+--header 'sec-ch-ua: "Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"' \
+--header 'sec-ch-ua-mobile: ?0' \
+--header 'sec-ch-ua-platform: "Windows"' \
+--header 'sec-fetch-dest: empty' \
+--header 'sec-fetch-mode: cors' \
+--header 'sec-fetch-site: same-origin' \
+--header 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' \
+--header 'x-requested-with: XMLHttpRequest'
+
+curl 'https://whoer.net/checkwhois' \
+  -H 'accept: */*' \
+  -H 'accept-language: en-US,en;q=0.9,vi;q=0.8,zh-TW;q=0.7,zh-CN;q=0.6,zh;q=0.5' \
+  -H 'content-type: multipart/form-data; boundary=----WebKitFormBoundary2QJaeoHVA1Xy7ZMW' \
+  -H 'cookie: v=2; cf_clearance=Hi4JMwkNymOivKoR95ub4nP7Nt0KnhtEWouJqbi5v1I-1723129431-1.0.1.1-fdyjpbp3xm.bm2bDZ_z3NcbhdNPgIqeMeFTTBF4Eh5dgq87Tc9gojuULO2_8VA6_m96C9li4k7nwC7vYRfFaEg' \
+  -H 'origin: https://whoer.net' \
+  -H 'priority: u=1, i' \
+  -H 'referer: https://whoer.net/checkwhois' \
+  -H 'sec-ch-ua: "Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "Windows"' \
+  -H 'sec-fetch-dest: empty' \
+  -H 'sec-fetch-mode: cors' \
+  -H 'sec-fetch-site: same-origin' \
+  -H 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36' \
+  --data-raw $'------WebKitFormBoundary2QJaeoHVA1Xy7ZMW\r\nContent-Disposition: form-data; name="partial"\r\n\r\n1\r\n------WebKitFormBoundary2QJaeoHVA1Xy7ZMW\r\nContent-Disposition: form-data; name="host"\r\n\r\n103.5.2.0\r\n------WebKitFormBoundary2QJaeoHVA1Xy7ZMW--\r\n'
